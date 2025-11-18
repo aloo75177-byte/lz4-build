@@ -1,16 +1,19 @@
-name: Build LZ4
+name: Build LZ4 (All Platforms)
 
 on:
   push:
   pull_request:
 
 jobs:
-  build:
+
+  # Desktop: Linux / macOS / Windows
+  desktop:
+    name: Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -18,23 +21,109 @@ jobs:
       - name: Download LZ4
         run: git clone https://github.com/lz4/lz4.git
 
-      - name: Build (Linux/macOS)
-        if: runner.os != 'Windows'
+      # Linux build
+      - name: Build Linux .so
+        if: runner.os == 'Linux'
         run: |
-          make -C lz4
-          mkdir -p artifacts
-          cp lz4/programs/lz4 artifacts/lz4-${{ runner.os }}
+          make -C lz4 BUILD_SHARED=yes
+          mkdir artifacts
+          cp lz4/lib/liblz4.so artifacts/liblz4-linux.so
 
-      - name: Build (Windows)
+      # macOS build
+      - name: Build macOS .dylib
+        if: runner.os == 'macOS'
+        run: |
+          make -C lz4 BUILD_SHARED=yes
+          mkdir artifacts
+          cp lz4/lib/liblz4.dylib artifacts/liblz4-macos.dylib
+
+      # Windows build (DLL)
+      - name: Build Windows DLL
         if: runner.os == 'Windows'
         run: |
-          cmake -S lz4 -B build
+          cmake -S lz4/build/cmake -B build -DBUILD_SHARED_LIBS=ON
           cmake --build build --config Release
           mkdir artifacts
-          copy build\programs\Release\lz4.exe artifacts\lz4-windows.exe
+          copy build\bin\Release\liblz4.dll artifacts\liblz4-windows.dll
 
-      - name: Upload binary
+      - name: Upload Desktop Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lz4-${{ matrix.os }}
+          path: artifacts
+
+  # Android Builds (4 ABI)
+  android:
+    name: Android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26c
+
+      - name: Download LZ4
+        run: git clone https://github.com/lz4/lz4.git
+
+      - name: Build Android .so
+        run: |
+          cmake -S lz4/build/cmake -B build \
+            -DANDROID_PLATFORM=21 \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_NDK=$ANDROID_NDK_HOME \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DBUILD_SHARED_LIBS=ON
+
+          cmake --build build --config Release
+
+          mkdir artifacts
+          cp build/liblz4.so artifacts/liblz4-android-${{ matrix.abi }}.so
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lz4-android-${{ matrix.abi }}
+          path: artifacts
+
+  # iOS Builds (device + simulator)
+  ios:
+    name: iOS (${{ matrix.platform }})
+    runs-on: macos-latest
+
+    strategy:
+      matrix:
+        platform: [OS64, SIMULATOR64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download LZ4
+        run: git clone https://github.com/lz4/lz4.git
+
+      - name: Download iOS CMake Toolchain
+        run: git clone https://github.com/leetal/ios-cmake.git ios-cmake
+
+      - name: Build iOS .dylib
+        run: |
+          cmake -S lz4/build/cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=ios-cmake/ios.toolchain.cmake \
+            -DPLATFORM=${{ matrix.platform }} \
+            -DBUILD_SHARED_LIBS=ON
+
+          cmake --build build --config Release
+
+          mkdir artifacts
+          cp build/liblz4.dylib artifacts/liblz4-ios-${{ matrix.platform }}.dylib
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lz4-ios-${{ matrix.platform }}
           path: artifacts
